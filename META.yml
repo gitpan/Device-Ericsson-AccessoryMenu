@@ -1,0 +1,17 @@
+--- #YAML:1.0
+name: Device-Ericsson-AccessoryMenu
+version: 0.5
+license: perl
+distribution_type: module
+requires:
+  Class::Accessor::Fast: 0
+  Test::More: 0
+recommends:
+  Device::SerialPort: 0
+build_requires: {}
+conflicts: {}
+provides:
+  Device::Ericsson::AccessoryMenu:
+    file: lib/Device/Ericsson/AccessoryMenu.pm
+    version: 0.5
+generated_by: Module::Build version 0.18
