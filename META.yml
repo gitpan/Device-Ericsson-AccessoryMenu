@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name: Device-Ericsson-AccessoryMenu
-version: 0.5
+version: 0.6
 license: perl
 distribution_type: module
 requires:
@@ -13,5 +13,8 @@ conflicts: {}
 provides:
   Device::Ericsson::AccessoryMenu:
     file: lib/Device/Ericsson/AccessoryMenu.pm
-    version: 0.5
+    version: 0.6
+  Device::Ericsson::AccessoryMenu::State:
+    file: lib/Device/Ericsson/AccessoryMenu/State.pm
+    version: ~
 generated_by: Module::Build version 0.18

@@ -4,4 +4,7 @@ Makefile
 Build
 ~$
 MANIFEST.SKIP
-.svn
+\.svn
+talk
+reference
+Device-*

@@ -1,11 +1,9 @@
 use strict;
 package Device::Ericsson::AccessoryMenu;
 use base 'Class::Accessor::Fast';
-__PACKAGE__->mk_accessors( qw( parents current_menu menu port ) );
+__PACKAGE__->mk_accessors( qw( states menu port debug callback ) );
 use vars qw( $VERSION );
-$VERSION = '0.5';
-
-use constant debug => 0;
+$VERSION = '0.6';
 
 =head1 NAME
 
@@ -50,7 +48,7 @@ applescript events, if that's your desire).
 
 sub new {
     my $class = shift;
-    $class->SUPER::new({ menu => [] });
+    $class->SUPER::new({ menu => [], @_ });
 }
 
 =head2 menu
@@ -84,17 +82,12 @@ sub send {
     my $what = shift;
     my $count = $self->port->write( "$what\r" );
     $self->port->write_drain;
-    print "# send '$what'\n" if debug;
+    print "# send '$what'\n" if $self->debug;
     return $count == length $what;
 }
 
-=head2 expect( $what, $timeout )
 
-expects something from the other end
-
-=cut
-
-# lifted from Device::Modem
+# Lifted from Device::Modem
 sub expect {
     my $self = shift;
     my ($expect, $timeout) = @_;
@@ -138,7 +131,8 @@ sub expect {
         $answer =~ s/^[\r\n]+//;
         $answer =~ s/[\r\n]+$//;
     }
-    print "# got '$answer'\n" if debug && defined $answer;
+
+    print "# got '$answer'\n" if $self->debug && defined $answer;
     return $answer;
 }
 
@@ -152,35 +146,50 @@ Notify the phone that there's an accessory connected
 sub register_menu {
     my $self = shift;
 
-    $self->parents( [] );
-    $self->current_menu( $self->menu );
+    $self->states( [] );
 
+    # Phone, Kree!
     $self->send( "ATZ" );
     $self->expect( "OK", 5000 );
+    # turn off echo
     $self->send( "ATE=0" );
     $self->expect( "OK" );
     $self->send( 'AT*EAM="'. $self->menu->[0] . '"' );
     $self->expect( "OK" );
 }
 
-=head2 send_menu( $selected )
-
-Dump the current menu to the phone
-
-=cut
-
-sub send_menu {
+sub enter_state {
     my $self = shift;
-    my $selected = shift || 1;
+    my $class = shift;
 
-    my @menu = @{ $self->current_menu };
-    my $c;
-    my @titles = grep { ++$c % 2 == 1 } @{ $menu[1] };
-    my $titles = join ',', map { qq{"$_"} } @titles;
-    my $length = scalar @titles;
-    $self->send( qq{AT*EASM="$menu[0]",1,$selected,$length,$titles} );
-    $self->expect( 'OK' );
+    $class = __PACKAGE__."::$class";
+    eval "require $class" or die $@;
+
+    my $entering =  $class->new( parent => $self, @_ );
+    unshift @{ $self->states }, $entering;
+
+    print "entering $entering\n" if $self->debug;
+    $entering->on_enter;
+    return;
 }
+
+sub exit_state {
+    my $self = shift;
+
+    my $leaving = shift @{ $self->states };
+    print "leaving $leaving\n" if $self->debug;
+    $leaving->on_exit;
+    my ($current) = @{ $self->states };
+    $current->on_enter if $current;
+    return;
+}
+
+sub current_state {
+    my $self = shift;
+    my ($state) = @{ $self->states };
+    return $state;
+}
+
 
 =head2 send_text( $title, @lines )
 
@@ -193,10 +202,55 @@ sub send_text {
     my $title = shift;
     @_ = ($title) unless @_;
 
-    $self->send( join ',', qq{AT*EAID=14,2,"$title"}, map { qq{"$_"} } @_ );
-    $self->expect( 'OK' );
-    do {} while !$self->expect;
+    $self->enter_state( 'Text', title => $title, lines => \@_ );
 }
+
+
+=head2 percent_slider( %args )
+
+ %args = (
+    title    => 'Slider',
+    steps    => 10,    # 1..10
+    value    => 50,
+    callback => undef, # a subroutine ref, will be called with the new value
+ );
+
+=cut
+
+sub percent_slider {
+    my $self = shift;
+    my %args = @_;
+
+    my $value = defined $args{value} ? $args{value}: 50;
+    $self->enter_state( 'Slider', ( title => $args{title} || 'Slider',
+                                    steps => $args{steps}  || 10,
+                                    value => $value,
+                                    callback => $args{callback} ) );
+}
+
+=head2 mouse_mode( %args )
+
+Put the T68i into a fullscan mode.  Returns keyboard events for every
+key pressed and released.
+
+ %args = (
+    title    => 'Mouse',
+    callback => sub ( $key, $updown ) {}, # will be called with the key and
+                                          # the updown event (1 = key
+                                          # down, 0 = key up)
+
+ );
+
+=cut
+
+sub mouse_mode {
+    my $self = shift;
+    my %args = @_;
+
+    $self->enter_state( 'Mouse', ( title => $args{title} || 'Mouse',
+                                   callback => $args{callback} ) );
+}
+
 
 =head2 control
 
@@ -208,40 +262,25 @@ callbacks and all that jazz.
 sub control {
     my $self = shift;
 
-    my $line = $self->expect;
+    # $self->port->modemlines; may be the key to 'it's attached, it's
+    # not attached' stuff
+
+    my $line = $self->expect("\r");
     return unless $line;
 
-    print "# control '$line'\n" if debug;
+    print "# control '$line'\n" if $self->debug;
+
+    if ( my $state = $self->current_state ) {
+        $state->handle( $line );
+        return;
+    }
 
     if ($line =~ /EAAI/) { # top level menu
-        $self->send_menu;
+        $self->enter_state( 'Menu', data => $self->menu );
+        return;
     }
 
-    if ($line =~ /EAMI: (\d+)/) { # menu item
-        my $item = $1;
-        if ($item == 0) { # back up
-            my $up = pop @{ $self->parents } or return;
-            $self->current_menu( $up->[0] );
-            $self->send_menu( $up->[1] );
-            return;
-        }
-
-        my @menu = @{ $self->current_menu->[1] };
-        my @pairs = [];
-        while (@menu) {
-            push @pairs, [ shift @menu, shift @menu ];
-        }
-        my ($name, $action) = @{ $pairs[ $item ] };
-
-        $action = $action->( $self ) if ref $action eq 'CODE';
-        if (ref $action eq 'ARRAY') { # wander down
-            push @{ $self->parents }, [ $self->current_menu, $item ];
-            $self->current_menu( [ $name => $action ] );
-            $item = 1;
-        }
-        $self->send_text( $name, $action ) if defined $action && !ref $action;
-        $self->send_menu($item);
-    }
+    warn "control got unexpected '$line'\n";
 }
 
 1;
@@ -257,6 +296,10 @@ Ericsson devices, but only time will tell.  Feedback welcome.
 
 Convenience methods for other C<EAID> values, like the percent input
 dialog.
+
+Disconnection (and reconnection) detection.  For a straight serial
+port this isn't really much of a win, but for bluetooth devices it'd
+be nifty to do a "they've entered/exited the zone" check.
 
 =head1 AUTHOR
 
