@@ -1,4 +1,4 @@
-README for Device::Ericsson::AccessoryMenu 0.6
+README for Device::Ericsson::AccessoryMenu 0.7
 
 =head1 NAME
 
@@ -47,6 +47,14 @@ and if all goes well
 What changed over the last 3 revisions
 
 =over
+
+=item 0.7	Monday 22nd September, 2003
+
+	Fixed a packageing mistake - we weren't shipping 
+	lib/Device/Ericsson/AccessoryMenu/Mouse.pm due to a glitch in
+	MANIFEST.SKIP
+
+
 
 =item 0.6	Wednesday 25th June, 2003
 
